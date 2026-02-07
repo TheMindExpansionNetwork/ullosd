@@ -211,6 +211,36 @@
             text-shadow: 0 0 20px #ffd93d;
             display: none;
         }
+
+        .sound-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            border-radius: 5px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 10px;
+            color: #00ff88;
+            transition: all 0.2s;
+            z-index: 100;
+        }
+
+        .sound-toggle:hover {
+            border-color: #00ff88;
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+        }
+
+        .sound-toggle.muted {
+            color: #ff6b6b;
+        }
+
+        .sound-toggle.muted:hover {
+            border-color: #ff6b6b;
+            box-shadow: 0 0 10px rgba(255, 107, 107, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -242,9 +272,164 @@
             <span>ARROWS</span> TO MOVE • <span>SPACE</span> TO PAUSE<br>
             EAT <span>◆</span> TO GROW • AVOID WALLS & SELF
         </div>
+
+        <button class="sound-toggle" id="soundToggle" onclick="toggleSound()" title="Toggle Sound">
+            🔊 SOUND
+        </button>
     </div>
 
     <script>
+        // ===== WEB AUDIO API SOUND SYSTEM =====
+        const SoundSystem = {
+            ctx: null,
+            muted: false,
+            humOscillator: null,
+            humGain: null,
+            
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            },
+            
+            // Create square wave for 8-bit retro feel
+            playSquareWave(frequency, duration, volume = 0.3) {
+                if (this.muted || !this.ctx) return;
+                
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(frequency, this.ctx.currentTime);
+                
+                gain.gain.setValueAtTime(volume, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                osc.start(this.ctx.currentTime);
+                osc.stop(this.ctx.currentTime + duration);
+            },
+            
+            // Create sawtooth wave for buzzy effects
+            playSawtooth(frequency, duration, volume = 0.3) {
+                if (this.muted || !this.ctx) return;
+                
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(frequency, this.ctx.currentTime);
+                
+                gain.gain.setValueAtTime(volume, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                osc.start(this.ctx.currentTime);
+                osc.stop(this.ctx.currentTime + duration);
+            },
+            
+            // Movement tick - short high blip
+            playMoveSound() {
+                if (this.muted || !this.ctx) return;
+                this.playSquareWave(200, 0.03, 0.15);
+            },
+            
+            // Food eat - coin collect sound (ascending arpeggio)
+            playEatSound() {
+                if (this.muted || !this.ctx) return;
+                
+                const now = this.ctx.currentTime;
+                const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+                
+                notes.forEach((freq, i) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(freq, now + i * 0.03);
+                    
+                    gain.gain.setValueAtTime(0.2, now + i * 0.03);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.03 + 0.15);
+                    
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    
+                    osc.start(now + i * 0.03);
+                    osc.stop(now + i * 0.03 + 0.15);
+                });
+            },
+            
+            // Game over - descending slide
+            playGameOverSound() {
+                if (this.muted || !this.ctx) return;
+                
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(440, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(55, this.ctx.currentTime + 1);
+                
+                gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 1);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                osc.start(this.ctx.currentTime);
+                osc.stop(this.ctx.currentTime + 1);
+            },
+            
+            // Background ambient arcade hum
+            startHum() {
+                if (this.muted || !this.ctx || this.humOscillator) return;
+                
+                this.humOscillator = this.ctx.createOscillator();
+                this.humGain = this.ctx.createGain();
+                
+                this.humOscillator.type = 'sine';
+                this.humOscillator.frequency.setValueAtTime(60, this.ctx.currentTime);
+                
+                // Very subtle volume
+                this.humGain.gain.setValueAtTime(0.03, this.ctx.currentTime);
+                
+                this.humOscillator.connect(this.humGain);
+                this.humGain.connect(this.ctx.destination);
+                
+                this.humOscillator.start();
+            },
+            
+            stopHum() {
+                if (this.humOscillator) {
+                    this.humOscillator.stop();
+                    this.humOscillator = null;
+                    this.humGain = null;
+                }
+            },
+            
+            toggleMute() {
+                this.muted = !this.muted;
+                if (this.muted) {
+                    this.stopHum();
+                } else if (gameRunning) {
+                    this.startHum();
+                }
+                return this.muted;
+            }
+        };
+        
+        function toggleSound() {
+            const btn = document.getElementById('soundToggle');
+            const isMuted = SoundSystem.toggleMute();
+            btn.textContent = isMuted ? '🔇 MUTED' : '🔊 SOUND';
+            btn.classList.toggle('muted', isMuted);
+        }
+
+        // ===== GAME CODE =====
         const canvas = document.getElementById('game');
         const ctx = canvas.getContext('2d');
         const gridSize = 20;
@@ -391,9 +576,11 @@
                 score += 10;
                 document.getElementById('score').textContent = score;
                 createExplosion(food.x, food.y);
+                SoundSystem.playEatSound();
                 placeFood();
             } else {
                 snake.pop();
+                SoundSystem.playMoveSound();
             }
         }
 
@@ -430,6 +617,10 @@
         function startGame() {
             if (gameRunning) return;
             
+            // Initialize sound system on first user interaction
+            SoundSystem.init();
+            SoundSystem.startHum();
+            
             gameRunning = true;
             gamePaused = false;
             document.getElementById('startBtn').style.display = 'none';
@@ -449,6 +640,8 @@
         function gameOver() {
             gameRunning = false;
             clearInterval(gameLoop);
+            SoundSystem.playGameOverSound();
+            SoundSystem.stopHum();
             
             if (score > highScore) {
                 highScore = score;
