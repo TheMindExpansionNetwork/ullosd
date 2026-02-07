@@ -1,0 +1,13 @@
+{
+  "name": "ullosd",
+  "version": "1.0.0",
+  "description": "Retro arcade-style snake game with CRT aesthetics",
+  "main": "index.html",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "dev": "python3 -m http.server 8000"
+  },
+  "keywords": ["snake", "game", "retro", "arcade", "html5", "canvas"],
+  "author": "The Mind Expansion Network",
+  "license": "MIT"
+}
