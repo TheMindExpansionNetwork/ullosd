@@ -167,6 +167,11 @@
             color: #ff6b6b;
         }
 
+        .instructions .powerup-star { color: #ffd700; }
+        .instructions .powerup-bolt { color: #00bfff; }
+        .instructions .powerup-shield { color: #00ffff; }
+        .instructions .powerup-apple { color: #ff69b4; }
+
         .game-over {
             position: absolute;
             top: 50%;
@@ -211,6 +216,53 @@
             text-shadow: 0 0 20px #ffd93d;
             display: none;
         }
+
+        /* Power-up indicators */
+        .powerup-bar {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 10px;
+            padding: 10px;
+            background: #111;
+            border-radius: 5px;
+            border: 2px solid #333;
+            min-height: 40px;
+        }
+
+        .powerup-indicator {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 10px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 5px;
+            font-size: 10px;
+            animation: powerup-pulse 0.5s infinite alternate;
+        }
+
+        .powerup-indicator.active {
+            display: flex;
+        }
+
+        @keyframes powerup-pulse {
+            from { transform: scale(1); box-shadow: 0 0 5px currentColor; }
+            to { transform: scale(1.05); box-shadow: 0 0 15px currentColor; }
+        }
+
+        .powerup-indicator .icon {
+            font-size: 16px;
+        }
+
+        .powerup-indicator .timer {
+            color: #fff;
+            font-size: 10px;
+        }
+
+        .powerup-indicator.star { color: #ffd700; border: 1px solid #ffd700; }
+        .powerup-indicator.bolt { color: #00bfff; border: 1px solid #00bfff; }
+        .powerup-indicator.shield { color: #00ffff; border: 1px solid #00ffff; }
+        .powerup-indicator.apple { color: #ff69b4; border: 1px solid #ff69b4; }
     </style>
 </head>
 <body>
@@ -233,6 +285,25 @@
             <div class="score-item">SCORE: <span id="score">0</span></div>
             <div class="score-item high-score">HI: <span id="highScore">0</span></div>
         </div>
+
+        <div class="powerup-bar" id="powerupBar">
+            <div class="powerup-indicator star" id="indicatorStar">
+                <span class="icon">🌟</span>
+                <span class="timer" id="timerStar">10s</span>
+            </div>
+            <div class="powerup-indicator bolt" id="indicatorBolt">
+                <span class="icon">⚡</span>
+                <span class="timer" id="timerBolt">5s</span>
+            </div>
+            <div class="powerup-indicator shield" id="indicatorShield">
+                <span class="icon">🛡️</span>
+                <span class="timer" id="timerShield">READY</span>
+            </div>
+            <div class="powerup-indicator apple" id="indicatorApple">
+                <span class="icon">🍎</span>
+                <span class="timer">GROW!</span>
+            </div>
+        </div>
         
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startGame()">START GAME</button>
@@ -240,7 +311,11 @@
         
         <div class="instructions">
             <span>ARROWS</span> TO MOVE • <span>SPACE</span> TO PAUSE<br>
-            EAT <span>◆</span> TO GROW • AVOID WALLS & SELF
+            EAT <span>◆</span> TO GROW • AVOID WALLS & SELF<br>
+            <span class="powerup-star">🌟</span> 2X PTS • 
+            <span class="powerup-bolt">⚡</span> SPEED • 
+            <span class="powerup-shield">🛡️</span> SHIELD • 
+            <span class="powerup-apple">🍎</span> GROW
         </div>
     </div>
 
@@ -260,6 +335,25 @@
         let gamePaused = false;
         let gameLoop;
         let particles = [];
+
+        // Power-up system
+        const POWERUP_TYPES = {
+            STAR: { emoji: '🌟', name: 'star', color: '#ffd700', duration: 10000, chance: 0.10 },
+            BOLT: { emoji: '⚡', name: 'bolt', color: '#00bfff', duration: 5000, chance: 0.10 },
+            SHIELD: { emoji: '🛡️', name: 'shield', color: '#00ffff', duration: -1, chance: 0.10 },
+            GOLDEN_APPLE: { emoji: '🍎', name: 'goldenApple', color: '#ff69b4', duration: 0, chance: 0.10 }
+        };
+
+        let activePowerup = null;
+        let powerupSpawnTime = 0;
+        const POWERUP_LIFETIME = 8000; // 8 seconds
+        let activeEffects = {
+            star: { active: false, endTime: 0 },
+            bolt: { active: false, endTime: 0 },
+            shield: { active: false, used: false }
+        };
+        let baseGameSpeed = 100;
+        let currentGameSpeed = 100;
 
         // Update high score display
         document.getElementById('highScore').textContent = highScore;
@@ -291,11 +385,195 @@
             }
         }
 
-        function createExplosion(x, y) {
-            const colors = ['#00ff88', '#00cc6a', '#fff', '#88ffaa'];
+        function createExplosion(x, y, color = null) {
+            const colors = color ? [color, '#fff', color] : ['#00ff88', '#00cc6a', '#fff', '#88ffaa'];
             for (let i = 0; i < 15; i++) {
                 particles.push(new Particle(x * gridSize + gridSize/2, y * gridSize + gridSize/2, colors[Math.floor(Math.random() * colors.length)]));
             }
+        }
+
+        function spawnPowerup() {
+            const rand = Math.random();
+            let cumulativeChance = 0;
+            
+            for (const key in POWERUP_TYPES) {
+                cumulativeChance += POWERUP_TYPES[key].chance;
+                if (rand < cumulativeChance) {
+                    const type = POWERUP_TYPES[key];
+                    let position;
+                    do {
+                        position = {
+                            x: Math.floor(Math.random() * tileCount),
+                            y: Math.floor(Math.random() * tileCount)
+                        };
+                    } while (
+                        snake.some(segment => segment.x === position.x && segment.y === position.y) ||
+                        (position.x === food.x && position.y === food.y)
+                    );
+                    
+                    activePowerup = {
+                        type: type,
+                        x: position.x,
+                        y: position.y,
+                        spawnTime: Date.now()
+                    };
+                    powerupSpawnTime = Date.now();
+                    return;
+                }
+            }
+        }
+
+        function drawPowerup() {
+            if (!activePowerup) return;
+
+            const elapsed = Date.now() - powerupSpawnTime;
+            const remaining = POWERUP_LIFETIME - elapsed;
+            
+            // Fade out in last 2 seconds
+            let alpha = 1;
+            if (remaining < 2000) {
+                alpha = 0.5 + 0.5 * Math.sin(Date.now() / 100);
+            }
+
+            const pulse = Math.sin(Date.now() / 80) * 3;
+            const type = activePowerup.type;
+            
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.shadowBlur = 25;
+            ctx.shadowColor = type.color;
+            ctx.fillStyle = type.color;
+            
+            const x = activePowerup.x * gridSize + gridSize/2;
+            const y = activePowerup.y * gridSize + gridSize/2;
+            const size = (gridSize/2 - 2) + pulse;
+            
+            // Draw sparkle effect
+            for (let i = 0; i < 4; i++) {
+                const angle = (Date.now() / 200) + (i * Math.PI / 2);
+                const sparkleX = x + Math.cos(angle) * (size + 5);
+                const sparkleY = y + Math.sin(angle) * (size + 5);
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(sparkleX - 2, sparkleY - 2, 4, 4);
+            }
+            
+            // Draw emoji background circle
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fillStyle = type.color;
+            ctx.fill();
+            
+            // Draw emoji
+            ctx.fillStyle = '#fff';
+            ctx.font = `${size}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(type.emoji, x, y + 2);
+            
+            ctx.restore();
+        }
+
+        function updatePowerups() {
+            // Check if powerup expired
+            if (activePowerup) {
+                if (Date.now() - powerupSpawnTime > POWERUP_LIFETIME) {
+                    activePowerup = null;
+                }
+            }
+
+            // Update active effects
+            const now = Date.now();
+            
+            // Star effect
+            if (activeEffects.star.active && now > activeEffects.star.endTime) {
+                activeEffects.star.active = false;
+                document.getElementById('indicatorStar').classList.remove('active');
+            }
+            
+            // Bolt effect
+            if (activeEffects.bolt.active && now > activeEffects.bolt.endTime) {
+                activeEffects.bolt.active = false;
+                currentGameSpeed = baseGameSpeed;
+                document.getElementById('indicatorBolt').classList.remove('active');
+                
+                // Restart game loop with normal speed
+                if (gameRunning && !gamePaused) {
+                    clearInterval(gameLoop);
+                    gameLoop = setInterval(gameStep, currentGameSpeed);
+                }
+            }
+
+            // Update timer displays
+            if (activeEffects.star.active) {
+                const remaining = Math.ceil((activeEffects.star.endTime - now) / 1000);
+                document.getElementById('timerStar').textContent = remaining + 's';
+            }
+            
+            if (activeEffects.bolt.active) {
+                const remaining = Math.ceil((activeEffects.bolt.endTime - now) / 1000);
+                document.getElementById('timerBolt').textContent = remaining + 's';
+            }
+        }
+
+        function activatePowerup(type) {
+            const now = Date.now();
+            
+            switch(type.name) {
+                case 'star':
+                    activeEffects.star.active = true;
+                    activeEffects.star.endTime = now + type.duration;
+                    document.getElementById('indicatorStar').classList.add('active');
+                    createExplosion(activePowerup.x, activePowerup.y, type.color);
+                    break;
+                    
+                case 'bolt':
+                    activeEffects.bolt.active = true;
+                    activeEffects.bolt.endTime = now + type.duration;
+                    currentGameSpeed = baseGameSpeed * 0.6; // 40% faster
+                    document.getElementById('indicatorBolt').classList.add('active');
+                    createExplosion(activePowerup.x, activePowerup.y, type.color);
+                    
+                    // Restart game loop with faster speed
+                    if (gameRunning && !gamePaused) {
+                        clearInterval(gameLoop);
+                        gameLoop = setInterval(gameStep, currentGameSpeed);
+                    }
+                    break;
+                    
+                case 'shield':
+                    activeEffects.shield.active = true;
+                    activeEffects.shield.used = false;
+                    document.getElementById('indicatorShield').classList.add('active');
+                    document.getElementById('timerShield').textContent = 'READY';
+                    createExplosion(activePowerup.x, activePowerup.y, type.color);
+                    break;
+                    
+                case 'goldenApple':
+                    // Instantly grow 5 segments
+                    const tail = snake[snake.length - 1];
+                    for (let i = 0; i < 5; i++) {
+                        snake.push({x: tail.x, y: tail.y});
+                    }
+                    score += 50; // Bonus points for golden apple
+                    document.getElementById('score').textContent = score;
+                    document.getElementById('indicatorApple').classList.add('active');
+                    setTimeout(() => {
+                        document.getElementById('indicatorApple').classList.remove('active');
+                    }, 2000);
+                    createExplosion(activePowerup.x, activePowerup.y, type.color);
+                    
+                    // Create trail of particles
+                    for (let i = 0; i < 5; i++) {
+                        setTimeout(() => {
+                            if (snake.length > i) {
+                                createExplosion(snake[i].x, snake[i].y, type.color);
+                            }
+                        }, i * 100);
+                    }
+                    break;
+            }
+            
+            activePowerup = null;
         }
 
         function drawGrid() {
@@ -317,16 +595,37 @@
             snake.forEach((segment, index) => {
                 // Gradient from head to tail
                 const green = Math.floor(255 - (index * 2));
-                ctx.fillStyle = `rgb(0, ${Math.max(green, 100)}, ${Math.floor(green * 0.5)})`;
+                let bodyColor = `rgb(0, ${Math.max(green, 100)}, ${Math.floor(green * 0.5)})`;
                 
-                // Glow effect for head
-                if (index === 0) {
-                    ctx.shadowBlur = 15;
-                    ctx.shadowColor = '#00ff88';
-                } else {
-                    ctx.shadowBlur = 0;
+                // Apply shield effect
+                if (activeEffects.shield.active && !activeEffects.shield.used) {
+                    if (index === 0) {
+                        ctx.shadowBlur = 20;
+                        ctx.shadowColor = '#00ffff';
+                    }
+                    // Cyan tint for shield
+                    bodyColor = `rgb(0, ${Math.max(green, 150)}, ${Math.floor(green * 0.8) + 100})`;
                 }
                 
+                // Apply bolt effect (blue tint)
+                if (activeEffects.bolt.active && index === 0) {
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#00bfff';
+                }
+                
+                // Apply star effect (gold tint)
+                if (activeEffects.star.active && index === 0) {
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#ffd700';
+                }
+                
+                // Normal glow for head
+                if (index === 0 && !activeEffects.shield.active && !activeEffects.bolt.active && !activeEffects.star.active) {
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = '#00ff88';
+                }
+                
+                ctx.fillStyle = bodyColor;
                 ctx.fillRect(segment.x * gridSize + 1, segment.y * gridSize + 1, gridSize - 2, gridSize - 2);
                 
                 // Eyes on head
@@ -335,8 +634,9 @@
                     ctx.fillRect(segment.x * gridSize + 5, segment.y * gridSize + 5, 4, 4);
                     ctx.fillRect(segment.x * gridSize + 11, segment.y * gridSize + 5, 4, 4);
                 }
+                
+                ctx.shadowBlur = 0;
             });
-            ctx.shadowBlur = 0;
         }
 
         function drawFood() {
@@ -374,8 +674,23 @@
 
             // Wall collision
             if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
-                gameOver();
-                return;
+                // Check shield
+                if (activeEffects.shield.active && !activeEffects.shield.used) {
+                    activeEffects.shield.used = true;
+                    document.getElementById('timerShield').textContent = 'USED';
+                    
+                    // Wrap snake to other side
+                    if (head.x < 0) head.x = tileCount - 1;
+                    else if (head.x >= tileCount) head.x = 0;
+                    else if (head.y < 0) head.y = tileCount - 1;
+                    else if (head.y >= tileCount) head.y = 0;
+                    
+                    // Visual feedback
+                    createExplosion(head.x, head.y, '#00ffff');
+                } else {
+                    gameOver();
+                    return;
+                }
             }
 
             // Self collision
@@ -388,12 +703,23 @@
 
             // Food collision
             if (head.x === food.x && head.y === food.y) {
-                score += 10;
+                const points = activeEffects.star.active ? 20 : 10;
+                score += points;
                 document.getElementById('score').textContent = score;
                 createExplosion(food.x, food.y);
                 placeFood();
+                
+                // Chance to spawn powerup after eating food
+                if (!activePowerup) {
+                    spawnPowerup();
+                }
             } else {
                 snake.pop();
+            }
+
+            // Powerup collision
+            if (activePowerup && head.x === activePowerup.x && head.y === activePowerup.y) {
+                activatePowerup(activePowerup.type);
             }
         }
 
@@ -403,7 +729,10 @@
                     x: Math.floor(Math.random() * tileCount),
                     y: Math.floor(Math.random() * tileCount)
                 };
-            } while (snake.some(segment => segment.x === food.x && segment.y === food.y));
+            } while (
+                snake.some(segment => segment.x === food.x && segment.y === food.y) ||
+                (activePowerup && activePowerup.x === food.x && activePowerup.y === food.y)
+            );
         }
 
         function draw() {
@@ -413,6 +742,7 @@
 
             drawGrid();
             drawFood();
+            drawPowerup();
             drawSnake();
             updateParticles();
         }
@@ -420,6 +750,7 @@
         function update() {
             if (!gameRunning || gamePaused) return;
             moveSnake();
+            updatePowerups();
         }
 
         function gameStep() {
@@ -436,6 +767,18 @@
             document.getElementById('gameOver').style.display = 'none';
             document.getElementById('paused').style.display = 'none';
             
+            // Reset powerups
+            activePowerup = null;
+            activeEffects = {
+                star: { active: false, endTime: 0 },
+                bolt: { active: false, endTime: 0 },
+                shield: { active: false, used: false }
+            };
+            currentGameSpeed = baseGameSpeed;
+            
+            // Hide all indicators
+            document.querySelectorAll('.powerup-indicator').forEach(el => el.classList.remove('active'));
+            
             snake = [{x: 10, y: 10}];
             dx = 1;
             dy = 0;
@@ -443,7 +786,10 @@
             document.getElementById('score').textContent = score;
             placeFood();
             
-            gameLoop = setInterval(gameStep, 100);
+            // Chance to spawn initial powerup
+            spawnPowerup();
+            
+            gameLoop = setInterval(gameStep, currentGameSpeed);
         }
 
         function gameOver() {
@@ -460,6 +806,9 @@
             document.getElementById('gameOver').style.display = 'block';
             document.getElementById('startBtn').textContent = 'TRY AGAIN';
             document.getElementById('startBtn').style.display = 'inline-block';
+            
+            // Hide powerup indicators
+            document.querySelectorAll('.powerup-indicator').forEach(el => el.classList.remove('active'));
         }
 
         function resetGame() {
